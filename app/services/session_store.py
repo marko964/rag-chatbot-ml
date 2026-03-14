@@ -12,22 +12,30 @@ class SessionStore:
     def __init__(self):
         self._sessions: dict[str, dict] = {}
 
-    def get(self, session_id: str) -> List[dict]:
+    def get(self, session_id: str) -> dict:
+        """Returns {"messages": [...], "pending_action": None|str}."""
         self._evict_stale()
         entry = self._sessions.get(session_id)
         if entry is None:
-            return []
+            return {"messages": [], "pending_action": None}
         entry["last_access"] = time.time()
-        return entry["messages"]
+        return {"messages": entry["messages"], "pending_action": entry.get("pending_action")}
 
-    def set(self, session_id: str, messages: List[dict]) -> None:
+    def set(self, session_id: str, messages: List[dict], pending_action: str | None = None) -> None:
         # Trim to max length, keeping the most recent messages
         if len(messages) > MAX_HISTORY_MESSAGES:
             messages = messages[-MAX_HISTORY_MESSAGES:]
         self._sessions[session_id] = {
             "messages": messages,
+            "pending_action": pending_action,
             "last_access": time.time(),
         }
+
+    def set_pending_action(self, session_id: str, action: str | None) -> None:
+        """Updates only pending_action for an existing session."""
+        entry = self._sessions.get(session_id)
+        if entry is not None:
+            entry["pending_action"] = action
 
     def _evict_stale(self) -> None:
         cutoff = time.time() - SESSION_TTL_SECONDS

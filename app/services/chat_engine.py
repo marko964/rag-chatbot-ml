@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.rag.retriever import retrieve
-from app.services import calcom
 from app.db.models import Lead
 
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 MAX_TOOL_ITERATIONS = 8
+
+_MARK_LEAD_PENDING_SENTINEL = "__MARK_LEAD_PENDING__"
 
 # ---------------------------------------------------------------------------
 # Tool definitions (JSON schema for OpenAI)
@@ -68,45 +69,13 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_available_slots",
+            "name": "mark_lead_pending",
             "description": (
-                "Check available meeting time slots for a specific date. "
-                "Use this before booking to show the visitor their options."
+                "Call this BEFORE asking the visitor for their name and email. "
+                "This signals that you are about to collect lead information. "
+                "Do not call it more than once per lead collection flow."
             ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "Date in YYYY-MM-DD format.",
-                    }
-                },
-                "required": ["date"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "book_meeting",
-            "description": (
-                "Book a meeting with a visitor. Collect their name, email, and preferred "
-                "date/time. The start_time must be an ISO 8601 datetime string "
-                "(e.g. 2024-06-15T14:00:00Z). Check available slots first."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "email": {"type": "string"},
-                    "start_time": {
-                        "type": "string",
-                        "description": "ISO 8601 datetime, e.g. 2024-06-15T14:00:00Z",
-                    },
-                    "notes": {"type": "string"},
-                },
-                "required": ["name", "email", "start_time"],
-            },
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
 ]
@@ -117,29 +86,32 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 def _system_prompt() -> str:
+    booking_info = (
+        f"Share the booking link: {settings.calcom_booking_url}"
+        if settings.calcom_booking_url
+        else "ask them to contact us via email"
+    )
     return f"""You are a helpful chat assistant for {settings.company_name}, embedded on the company website.
 
 Your responsibilities:
 1. **Answer questions** about the company — always call search_knowledge_base before answering company-specific questions.
 
 2. **Capture leads** — when a visitor expresses interest in being contacted or learning more:
-   a. Ask for their name and email (phone/company optional) if not already provided.
-   b. As soon as the user provides their name and email in any format, immediately call store_lead — do NOT greet or ask follow-up questions first.
-   c. Only after store_lead succeeds, confirm warmly and offer further help.
+   a. Call mark_lead_pending once (this registers your intent server-side).
+   b. Ask for their name and email (phone/company optional).
+   c. When the visitor provides their contact info, call store_lead immediately.
+   d. Confirm warmly after store_lead succeeds.
 
-3. **Book meetings** — when a visitor wants to schedule a meeting or appointment:
-   a. First ask what date they prefer (do NOT ask for name/email yet).
-   b. Call get_available_slots for that date and show the available times.
-   c. Once the visitor picks a time, ask for their name and email.
-   d. Call book_meeting with all collected details.
-   e. Confirm the booking warmly.
+3. **Book meetings** — when a visitor wants to schedule a meeting:
+   - {booking_info}.
+   - Do not ask for name/email or try to book manually.
 
 Guidelines:
 - Keep responses concise and friendly — this is a chat widget.
 - Always search the knowledge base before answering company-specific questions.
 - If something is not in the knowledge base, say so honestly. Do not make up information.
 - Detect the language of the user's first message and respond in that language for the entire conversation.
-- After storing a lead or booking a meeting, confirm it warmly to the visitor."""
+- After storing a lead, confirm it warmly to the visitor."""
 
 
 # ---------------------------------------------------------------------------
@@ -167,18 +139,8 @@ async def _execute_tool(name: str, args: dict, db: Session) -> str:
             db.commit()
             return f"Lead saved successfully for {args['name']} ({args['email']})."
 
-        elif name == "get_available_slots":
-            result = await calcom.get_available_slots(args["date"])
-            return json.dumps(result)
-
-        elif name == "book_meeting":
-            result = await calcom.create_booking(
-                name=args["name"],
-                email=args["email"],
-                start_time=args["start_time"],
-                notes=args.get("notes", ""),
-            )
-            return json.dumps(result)
+        elif name == "mark_lead_pending":
+            return _MARK_LEAD_PENDING_SENTINEL
 
         else:
             return f"Unknown tool: {name}"
@@ -191,7 +153,11 @@ async def _execute_tool(name: str, args: dict, db: Session) -> str:
 # Main chat function
 # ---------------------------------------------------------------------------
 
-async def run_chat(messages: List[dict], db: Session) -> tuple[str, List[dict]]:
+async def run_chat(
+    messages: List[dict],
+    db: Session,
+    forced_tool: str | None = None,
+) -> tuple[str, List[dict], str | None]:
     """
     Run one user turn through the tool-calling loop.
 
@@ -199,21 +165,45 @@ async def run_chat(messages: List[dict], db: Session) -> tuple[str, List[dict]]:
         messages: Full conversation history (role/content dicts, no system message).
                   The latest user message must already be appended before calling.
         db: SQLAlchemy session for lead storage.
+        forced_tool: If set, force the model to call this tool on the first iteration.
 
     Returns:
-        (assistant_text, updated_messages)
+        (assistant_text, updated_messages, new_pending_action)
     """
     system = {"role": "system", "content": _system_prompt()}
     iterations = 0
+    new_pending_action: str | None = None
+    first_iteration = True
 
     while iterations < MAX_TOOL_ITERATIONS:
         iterations += 1
 
+        # Build the message list for this call
+        call_messages = list(messages)
+
+        # On the first iteration with a forced tool, inject a reinforcement hint
+        # and force the tool_choice
+        if first_iteration and forced_tool:
+            # Inject reinforcement just before the last user message
+            reinforcement = {
+                "role": "system",
+                "content": (
+                    "The user just provided their contact details. "
+                    "Extract name and email from their last message and call store_lead immediately."
+                ),
+            }
+            call_messages = call_messages[:-1] + [reinforcement] + call_messages[-1:]
+            tool_choice = {"type": "function", "name": forced_tool}
+        else:
+            tool_choice = "auto"
+
+        first_iteration = False
+
         response = await client.chat.completions.create(
             model=settings.openai_model,
-            messages=[system] + messages,
+            messages=[system] + call_messages,
             tools=TOOLS,
-            tool_choice="auto",
+            tool_choice=tool_choice,
         )
 
         msg = response.choices[0].message
@@ -222,7 +212,7 @@ async def run_chat(messages: List[dict], db: Session) -> tuple[str, List[dict]]:
             # Final text response
             text = msg.content or ""
             messages.append({"role": "assistant", "content": text})
-            return text, messages
+            return text, messages, new_pending_action
 
         # Append assistant message with tool calls to history
         messages.append({
@@ -249,13 +239,28 @@ async def run_chat(messages: List[dict], db: Session) -> tuple[str, List[dict]]:
                 args = {}
 
             result = await _execute_tool(tc.function.name, args, db)
+
+            if result == _MARK_LEAD_PENDING_SENTINEL:
+                # Don't expose sentinel to the model; return empty ack
+                new_pending_action = "store_lead"
+                tool_result = "Noted."
+            elif tc.function.name == "store_lead":
+                tool_result = result
+                if result.startswith("Lead saved successfully"):
+                    new_pending_action = None
+                elif forced_tool == "store_lead":
+                    # store_lead was forced but failed (e.g. missing email) — keep pending
+                    new_pending_action = "store_lead"
+            else:
+                tool_result = result
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": result,
+                "content": tool_result,
             })
 
     # Safety: max iterations reached
     fallback = "I'm sorry, I ran into an issue processing your request. Please try again."
     messages.append({"role": "assistant", "content": fallback})
-    return fallback, messages
+    return fallback, messages, new_pending_action

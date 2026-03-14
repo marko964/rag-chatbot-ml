@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     calcom_api_key: str = ""
     calcom_event_type_id: str = ""
     calcom_base_url: str = "https://api.cal.com/v2"
+    calcom_booking_url: str = ""
 
     # Company
     company_name: str = "My Company"

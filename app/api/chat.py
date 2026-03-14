@@ -43,11 +43,16 @@ async def chat(request: Request, body: ChatRequest, db: Session = Depends(get_db
             response="I can only answer questions about our company. How can I help you?",
         )
 
-    history = session_store.get(session_id)
+    session_data = session_store.get(session_id)
+    history = session_data["messages"]
+    pending_action = session_data["pending_action"]
+
     history.append({"role": "user", "content": body.message})
 
-    response_text, history = await run_chat(history, db)
+    response_text, history, new_pending_action = await run_chat(
+        history, db, forced_tool=pending_action
+    )
 
-    session_store.set(session_id, history)
+    session_store.set(session_id, history, pending_action=new_pending_action)
 
     return ChatResponse(session_id=session_id, response=response_text)
