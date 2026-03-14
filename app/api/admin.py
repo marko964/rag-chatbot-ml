@@ -7,6 +7,7 @@ from typing import Optional
 from app.db.database import get_db
 from app.db.models import Lead
 from app.config import settings
+from app.rag.retriever import _get_collection, retrieve
 
 router = APIRouter()
 
@@ -31,3 +32,14 @@ class LeadOut(BaseModel):
 @router.get("/admin/leads", response_model=list[LeadOut], dependencies=[Depends(verify_admin)])
 def list_leads(db: Session = Depends(get_db)):
     return db.query(Lead).order_by(Lead.created_at.desc()).all()
+
+
+@router.get("/admin/debug/kb", dependencies=[Depends(verify_admin)])
+def debug_kb(q: str = "products and services"):
+    col = _get_collection()
+    results = retrieve(q)
+    return {
+        "chunk_count": col.count(),
+        "query": q,
+        "results": results,
+    }
