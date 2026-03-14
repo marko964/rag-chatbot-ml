@@ -189,7 +189,8 @@ async def run_chat(
                 "role": "system",
                 "content": (
                     "The user just provided their contact details. "
-                    "Extract name and email from their last message and call store_lead immediately."
+                    "Extract name and email from their last message and call store_lead immediately. "
+                    "IMPORTANT: Respond in the same language the user has been using throughout this conversation."
                 ),
             }
             call_messages = call_messages[:-1] + [reinforcement] + call_messages[-1:]
