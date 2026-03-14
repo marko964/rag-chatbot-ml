@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Ensure data directories exist
-RUN mkdir -p data/chroma_store data/documents
+# Persistent data dirs (will be on mounted volume)
+RUN mkdir -p data/chroma_store
+
+# Copy knowledge docs to a path outside the volume so they survive the mount
+RUN mkdir -p /app/kb_docs && \
+    cp -r data/documents/. /app/kb_docs/ 2>/dev/null || true
 
 EXPOSE 8000
 

@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     try:
         col = _get_collection()
         if col.count() == 0:
-            docs_dir = Path("data/documents")
+            docs_dir = Path("/app/kb_docs")
             if docs_dir.exists():
                 ingest_directory(docs_dir)
     except Exception:
