@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.main import limiter
+from app.limiter import limiter
 from app.services.chat_engine import run_chat
 from app.services.session_store import session_store
 
