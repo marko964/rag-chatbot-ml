@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -38,6 +38,13 @@ app.add_middleware(
 
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(admin.router, prefix="/api/v1", tags=["admin"])
+
+
+@app.middleware("http")
+async def no_cache(request: Request, call_next):
+    response: Response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/health", tags=["health"])
