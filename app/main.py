@@ -5,15 +5,28 @@ from fastapi.responses import JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from pathlib import Path
+
 from app.config import settings
 from app.db.database import create_tables
 from app.limiter import limiter
+from app.rag.ingest import ingest_directory
+from app.rag.retriever import _get_collection
 from app.api import chat, admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
+    # Auto-ingest documents on startup if collection is empty
+    try:
+        col = _get_collection()
+        if col.count() == 0:
+            docs_dir = Path("data/documents")
+            if docs_dir.exists():
+                ingest_directory(docs_dir)
+    except Exception:
+        pass
     yield
 
 
