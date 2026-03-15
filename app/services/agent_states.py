@@ -1,6 +1,7 @@
 """State machine definitions for the RAG agent."""
 from enum import Enum
-from typing import TypedDict
+
+from pydantic import BaseModel
 
 from app.config import settings
 
@@ -12,7 +13,7 @@ class AgentState(str, Enum):
     SCHEDULING         = "SCHEDULING"
 
 
-class QuickAction(TypedDict):
+class QuickAction(BaseModel):
     label: str   # Button text shown in UI
     value: str   # Message sent back when button is clicked
 
