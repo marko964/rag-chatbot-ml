@@ -36,8 +36,10 @@ class ChatResponse(BaseModel):
 
 def _greeting_response(session_id: str) -> ChatResponse:
     greeting_text = (
-        f"Willkommen bei {settings.company_name}! "
-        "Wie kann ich Ihnen helfen? Wählen Sie eine Option oder schreiben Sie direkt."
+        f"Hallo! 👋 Willkommen bei {settings.company_name}. "
+        "Ich bin Ihr KI-Assistent und helfe Ihnen gerne bei Fragen zu unseren Leistungen – "
+        "von Premium Webentwicklung über KI-Chatbots bis hin zu Workflow-Automatisierung. "
+        "Was kann ich für Sie tun?"
     )
     return ChatResponse(
         session_id=session_id,
