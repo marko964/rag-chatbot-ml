@@ -8,110 +8,103 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.rag.retriever import retrieve
 from app.db.models import Lead
+from app.services.agent_states import AgentState, STATE_PROMPTS, STATE_TOOL_NAMES
 
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 MAX_TOOL_ITERATIONS = 8
 
 _MARK_LEAD_PENDING_SENTINEL = "__MARK_LEAD_PENDING__"
+_REQUEST_SCHEDULING_SENTINEL = "__REQUEST_SCHEDULING__"
 
 # ---------------------------------------------------------------------------
 # Tool definitions (JSON schema for OpenAI)
 # ---------------------------------------------------------------------------
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": (
-                "Search the company knowledge base to answer questions about the company, "
-                "its products, services, pricing, team, policies, etc. "
-                "Always call this before answering company-specific questions."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query, written as a short question or keywords.",
-                    }
-                },
-                "required": ["query"],
+_TOOL_SEARCH_KB = {
+    "type": "function",
+    "function": {
+        "name": "search_knowledge_base",
+        "description": (
+            "Search the company knowledge base to answer questions about the company, "
+            "its products, services, pricing, team, policies, etc. "
+            "Always call this before answering company-specific questions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query, written as a short question or keywords.",
+                }
             },
+            "required": ["query"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "store_lead",
-            "description": (
-                "Save customer contact information when a visitor expresses interest in "
-                "being contacted, wants more information, or requests a follow-up. "
-                "Collect name and email at minimum before calling this."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "email": {"type": "string"},
-                    "phone": {"type": "string"},
-                    "company": {"type": "string"},
-                    "notes": {
-                        "type": "string",
-                        "description": "What the customer is interested in or their message.",
-                    },
+}
+
+_TOOL_STORE_LEAD = {
+    "type": "function",
+    "function": {
+        "name": "store_lead",
+        "description": (
+            "Save customer contact information when a visitor expresses interest in "
+            "being contacted, wants more information, or requests a follow-up. "
+            "Collect name and email at minimum before calling this."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "email": {"type": "string"},
+                "phone": {"type": "string"},
+                "company": {"type": "string"},
+                "notes": {
+                    "type": "string",
+                    "description": "What the customer is interested in or their message.",
                 },
-                "required": ["name", "email"],
             },
+            "required": ["name", "email"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "mark_lead_pending",
-            "description": (
-                "Call this BEFORE asking the visitor for their name and email. "
-                "This signals that you are about to collect lead information. "
-                "Do not call it more than once per lead collection flow."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
+}
+
+_TOOL_MARK_LEAD_PENDING = {
+    "type": "function",
+    "function": {
+        "name": "mark_lead_pending",
+        "description": (
+            "Call this BEFORE asking the visitor for their name and email. "
+            "This signals that you are about to collect lead information. "
+            "Do not call it more than once per lead collection flow."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
     },
-]
+}
+
+_TOOL_REQUEST_SCHEDULING = {
+    "type": "function",
+    "function": {
+        "name": "request_scheduling",
+        "description": (
+            "Call this when a visitor wants to book, schedule, or arrange a meeting. "
+            "Do not ask for name/email first — call this immediately."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+TOOL_REGISTRY: dict[str, dict] = {
+    "search_knowledge_base": _TOOL_SEARCH_KB,
+    "store_lead":            _TOOL_STORE_LEAD,
+    "mark_lead_pending":     _TOOL_MARK_LEAD_PENDING,
+    "request_scheduling":    _TOOL_REQUEST_SCHEDULING,
+}
 
 
-# ---------------------------------------------------------------------------
-# System prompt
-# ---------------------------------------------------------------------------
-
-def _system_prompt() -> str:
-    booking_info = (
-        f"Share the booking link: {settings.calcom_booking_url}"
-        if settings.calcom_booking_url
-        else "ask them to contact us via email"
-    )
-    return f"""You are a helpful chat assistant for {settings.company_name}, embedded on the company website.
-
-Your responsibilities:
-1. **Answer questions** about the company — always call search_knowledge_base before answering company-specific questions.
-
-2. **Capture leads** — when a visitor expresses interest in being contacted or learning more:
-   a. Call mark_lead_pending once (this registers your intent server-side).
-   b. Ask for their name and email (phone/company optional).
-   c. When the visitor provides their contact info, call store_lead immediately.
-   d. Confirm warmly after store_lead succeeds.
-
-3. **Book meetings** — when a visitor wants to schedule a meeting:
-   - {booking_info}.
-   - Do not ask for name/email or try to book manually.
-
-Guidelines:
-- Keep responses concise and friendly — this is a chat widget.
-- Always search the knowledge base before answering company-specific questions.
-- If something is not in the knowledge base, say so honestly. Do not make up information.
-- Detect the language of the user's first message and respond in that language for the entire conversation.
-- After storing a lead, confirm it warmly to the visitor."""
+def _tools_for_state(state: AgentState) -> list[dict]:
+    names = STATE_TOOL_NAMES.get(state, list(TOOL_REGISTRY.keys()))
+    return [TOOL_REGISTRY[n] for n in names if n in TOOL_REGISTRY]
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +135,9 @@ async def _execute_tool(name: str, args: dict, db: Session) -> str:
         elif name == "mark_lead_pending":
             return _MARK_LEAD_PENDING_SENTINEL
 
+        elif name == "request_scheduling":
+            return _REQUEST_SCHEDULING_SENTINEL
+
         else:
             return f"Unknown tool: {name}"
 
@@ -156,8 +152,9 @@ async def _execute_tool(name: str, args: dict, db: Session) -> str:
 async def run_chat(
     messages: List[dict],
     db: Session,
+    state: AgentState = AgentState.KNOWLEDGE_BASE,
     forced_tool: str | None = None,
-) -> tuple[str, List[dict], str | None]:
+) -> tuple[str, List[dict], AgentState, str | None]:
     """
     Run one user turn through the tool-calling loop.
 
@@ -165,14 +162,19 @@ async def run_chat(
         messages: Full conversation history (role/content dicts, no system message).
                   The latest user message must already be appended before calling.
         db: SQLAlchemy session for lead storage.
+        state: Current agent state, determines system prompt and available tools.
         forced_tool: If set, force the model to call this tool on the first iteration.
 
     Returns:
-        (assistant_text, updated_messages, new_pending_action)
+        (assistant_text, updated_messages, new_state, new_pending_action)
     """
-    system = {"role": "system", "content": _system_prompt()}
+    system_content = STATE_PROMPTS.get(state, STATE_PROMPTS[AgentState.KNOWLEDGE_BASE])
+    system = {"role": "system", "content": system_content}
+    tools = _tools_for_state(state)
+
     iterations = 0
     new_pending_action: str | None = None
+    new_state: AgentState = state
     first_iteration = True
 
     while iterations < MAX_TOOL_ITERATIONS:
@@ -184,7 +186,6 @@ async def run_chat(
         # On the first iteration with a forced tool, inject a reinforcement hint
         # and force the tool_choice
         if first_iteration and forced_tool:
-            # Inject reinforcement just before the last user message
             reinforcement = {
                 "role": "system",
                 "content": (
@@ -203,7 +204,7 @@ async def run_chat(
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[system] + call_messages,
-            tools=TOOLS,
+            tools=tools,
             tool_choice=tool_choice,
         )
 
@@ -213,7 +214,7 @@ async def run_chat(
             # Final text response
             text = msg.content or ""
             messages.append({"role": "assistant", "content": text})
-            return text, messages, new_pending_action
+            return text, messages, new_state, new_pending_action
 
         # Append assistant message with tool calls to history
         messages.append({
@@ -242,16 +243,23 @@ async def run_chat(
             result = await _execute_tool(tc.function.name, args, db)
 
             if result == _MARK_LEAD_PENDING_SENTINEL:
-                # Don't expose sentinel to the model; return empty ack
                 new_pending_action = "store_lead"
-                tool_result = "Noted."
+                new_state = AgentState.LEAD_QUALIFICATION
+                tool_result = "Noted. You may now ask for the visitor's contact details."
+
+            elif result == _REQUEST_SCHEDULING_SENTINEL:
+                new_state = AgentState.SCHEDULING
+                tool_result = "Scheduling mode activated."
+
             elif tc.function.name == "store_lead":
                 tool_result = result
                 if result.startswith("Lead saved successfully"):
                     new_pending_action = None
+                    new_state = AgentState.KNOWLEDGE_BASE
                 elif forced_tool == "store_lead":
                     # store_lead was forced but failed (e.g. missing email) — keep pending
                     new_pending_action = "store_lead"
+
             else:
                 tool_result = result
 
@@ -264,4 +272,4 @@ async def run_chat(
     # Safety: max iterations reached
     fallback = "I'm sorry, I ran into an issue processing your request. Please try again."
     messages.append({"role": "assistant", "content": fallback})
-    return fallback, messages, new_pending_action
+    return fallback, messages, new_state, new_pending_action

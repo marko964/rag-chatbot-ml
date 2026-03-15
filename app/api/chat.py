@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.database import get_db
 from app.limiter import limiter
+from app.services.agent_states import AgentState, QuickAction, STATE_ACTIONS
 from app.services.chat_engine import run_chat
 from app.services.session_store import session_store
 
@@ -19,17 +21,30 @@ _INJECTION_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
 
 class ChatRequest(BaseModel):
     session_id: str | None = Field(None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-    message: str = Field(..., min_length=1, max_length=1000)
+    message: str | None = Field(None, min_length=1, max_length=1000)
 
 
 class ChatResponse(BaseModel):
     session_id: str
     response: str
+    state: str
+    actions: list[QuickAction]
+
+
+def _greeting_response(session_id: str) -> ChatResponse:
+    greeting_text = (
+        f"Willkommen bei {settings.company_name}! "
+        "Wie kann ich Ihnen helfen? Wählen Sie eine Option oder schreiben Sie direkt."
+    )
+    return ChatResponse(
+        session_id=session_id,
+        response=greeting_text,
+        state=AgentState.GREETING,
+        actions=STATE_ACTIONS[AgentState.GREETING],
+    )
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -37,22 +52,41 @@ class ChatResponse(BaseModel):
 async def chat(request: Request, body: ChatRequest, db: Session = Depends(get_db)):
     session_id = body.session_id or str(uuid.uuid4())
 
+    # No message → greeting (e.g. widget opened)
+    if body.message is None:
+        return _greeting_response(session_id)
+
+    session_data = session_store.get(session_id)
+    current_state = session_data["state"]
+
+    # GREETING + first real message → transition to KNOWLEDGE_BASE
+    if current_state == AgentState.GREETING and not session_data["messages"]:
+        current_state = AgentState.KNOWLEDGE_BASE
+
     if _INJECTION_PATTERNS.search(body.message):
         return ChatResponse(
             session_id=session_id,
             response="I can only answer questions about our company. How can I help you?",
+            state=current_state,
+            actions=STATE_ACTIONS[current_state],
         )
 
-    session_data = session_store.get(session_id)
     history = session_data["messages"]
     pending_action = session_data["pending_action"]
-
     history.append({"role": "user", "content": body.message})
 
-    response_text, history, new_pending_action = await run_chat(
-        history, db, forced_tool=pending_action
+    response_text, history, new_state, new_pending_action = await run_chat(
+        messages=history,
+        db=db,
+        state=current_state,
+        forced_tool=pending_action,
     )
 
-    session_store.set(session_id, history, pending_action=new_pending_action)
+    session_store.set(session_id, history, pending_action=new_pending_action, state=new_state)
 
-    return ChatResponse(session_id=session_id, response=response_text)
+    return ChatResponse(
+        session_id=session_id,
+        response=response_text,
+        state=new_state,
+        actions=STATE_ACTIONS[new_state],
+    )

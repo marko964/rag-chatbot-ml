@@ -2,6 +2,8 @@
 import time
 from typing import List
 
+from app.services.agent_states import AgentState
+
 # Sessions older than this are evicted
 SESSION_TTL_SECONDS = 1800  # 30 minutes
 # Keep at most this many messages per session (prevents context overflow)
@@ -13,21 +15,32 @@ class SessionStore:
         self._sessions: dict[str, dict] = {}
 
     def get(self, session_id: str) -> dict:
-        """Returns {"messages": [...], "pending_action": None|str}."""
+        """Returns {"messages": [...], "pending_action": None|str, "state": AgentState}."""
         self._evict_stale()
         entry = self._sessions.get(session_id)
         if entry is None:
-            return {"messages": [], "pending_action": None}
+            return {"messages": [], "pending_action": None, "state": AgentState.GREETING}
         entry["last_access"] = time.time()
-        return {"messages": entry["messages"], "pending_action": entry.get("pending_action")}
+        return {
+            "messages": entry["messages"],
+            "pending_action": entry.get("pending_action"),
+            "state": entry.get("state", AgentState.GREETING),
+        }
 
-    def set(self, session_id: str, messages: List[dict], pending_action: str | None = None) -> None:
+    def set(
+        self,
+        session_id: str,
+        messages: List[dict],
+        pending_action: str | None = None,
+        state: AgentState = AgentState.KNOWLEDGE_BASE,
+    ) -> None:
         # Trim to max length, keeping the most recent messages
         if len(messages) > MAX_HISTORY_MESSAGES:
             messages = messages[-MAX_HISTORY_MESSAGES:]
         self._sessions[session_id] = {
             "messages": messages,
             "pending_action": pending_action,
+            "state": state,
             "last_access": time.time(),
         }
 
