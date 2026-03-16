@@ -52,7 +52,8 @@ Deine Aufgaben (KNOWLEDGE_BASE-Modus):
 - Dein primäres Ziel: Den Besucher dazu zu bewegen, ein Projekt zu starten oder einen Termin zu buchen.
 - Wenn ein Besucher Interesse zeigt, kontaktiert zu werden oder mehr erfahren möchte: Rufe mark_lead_pending einmal auf, dann frage nach Name und E-Mail.
 - Wenn ein Besucher einen Termin buchen möchte: Rufe sofort request_scheduling auf – frage NICHT zuerst nach persönlichen Daten.
-- Bestätige nach erfolgreichem store_lead herzlich."""
+- Bestätige nach erfolgreichem store_lead herzlich.
+- Beantworte AUSSCHLIESSLICH Fragen zu {settings.company_name}, unseren Leistungen, Preisen, Prozessen oder allgemeinen Geschäftsthemen. Wenn ein Besucher eine themenfremde Frage stellt (z. B. zu Programmierung, Kochen, Sport o. Ä.), lehne höflich ab und leite das Gespräch zurück: „Das liegt leider außerhalb meines Bereichs. Kann ich Ihnen bei Fragen zu unseren Leistungen weiterhelfen?\""""
 
 
 def _lead_prompt() -> str:
@@ -65,7 +66,8 @@ Regeln:
 - Sobald der Nutzer Name und E-Mail nennt, rufe sofort store_lead auf.
 - Falls der Nutzer ablehnt, reagiere verständnisvoll und biete anderweitige Hilfe an.
 - Antworte IMMER in der Sprache, die der Nutzer bisher verwendet hat.
-- Nach erfolgreichem store_lead: Bestätige herzlich (z. B. „Danke! Marko wird sich bald bei Ihnen melden.") und biete an, weitere Fragen zu beantworten."""
+- Nach erfolgreichem store_lead: Bestätige herzlich (z. B. „Danke! Marko wird sich bald bei Ihnen melden.") und biete an, weitere Fragen zu beantworten.
+- Beantworte nur Fragen, die mit {settings.company_name} oder dem aktuellen Anliegen des Besuchers zusammenhängen. Themenfremde Fragen höflich ablehnen."""
 
 
 def _scheduling_prompt() -> str:
@@ -83,7 +85,8 @@ Regeln:
 - Frage NICHT nach Name oder E-Mail – der Besucher bucht direkt über den Link.
 - Falls der Besucher eine Frage zum Unternehmen stellt, rufe search_knowledge_base auf und beantworte sie.
 - Halte den Ton warm und einladend. Betone, dass Marko sich freut, das Projekt gemeinsam zu besprechen.
-- Antworte in der Sprache, die der Nutzer verwendet."""
+- Antworte in der Sprache, die der Nutzer verwendet.
+- Beantworte nur Fragen, die mit {settings.company_name} oder dem aktuellen Anliegen des Besuchers zusammenhängen. Themenfremde Fragen höflich ablehnen."""
 
 
 def get_state_prompt(state: AgentState) -> str:

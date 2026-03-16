@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     calcom_booking_url: str = ""
 
     # Company
-    company_name: str = "My Company"
+    company_name: str = "ML - Solutions"
 
     # Admin
     admin_api_key: str = "change-me"
