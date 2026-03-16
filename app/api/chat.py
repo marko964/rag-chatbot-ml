@@ -8,16 +8,26 @@ from app.config import settings
 from app.db.database import get_db
 from app.limiter import limiter
 from app.services.agent_states import AgentState, QuickAction, STATE_ACTIONS
-from app.services.chat_engine import run_chat
+from app.services.graph import chat_graph
 from app.services.session_store import session_store
 
 router = APIRouter()
 
 # Phrases that suggest prompt injection attempts
+import re
+
 _INJECTION_PATTERNS = re.compile(
-    r"(ignore (all |previous |prior )?(instructions?|prompts?|rules?)|"
-    r"system prompt|jailbreak|disregard|act as (if )?you are|"
-    r"you are now|pretend (you are|to be)|forget (everything|your instructions))",
+    r"("
+    # Englisch: ignore instructions / Deutsch: ignoriere Anweisungen
+    r"(ignore|ignoriere|vergiss|forget) (all |alle |previous |vorherige |prior )?(instructions?|anweisungen?|prompts?|regeln?|rules?)|"
+    # System-Begriffe
+    r"system prompt|systemanweisung|jailbreak|disregard|missachte|"
+    # Rollenspiele (Act as / Spiele / Tue so als ob)
+    r"act as (if )?you are|tue so als ob du|handle als|du bist jetzt|you are now|"
+    r"pretend (you are|to be)|gib vor zu sein|"
+    # Alles vergessen
+    r"forget (everything|your instructions)|alles vergessen"
+    r")",
     re.IGNORECASE,
 )
 
@@ -77,14 +87,17 @@ async def chat(request: Request, body: ChatRequest, db: Session = Depends(get_db
     pending_action = session_data["pending_action"]
     history.append({"role": "user", "content": body.message})
 
-    response_text, history, new_state, new_pending_action = await run_chat(
-        messages=history,
-        db=db,
-        state=current_state,
-        forced_tool=pending_action,
-    )
-
-    session_store.set(session_id, history, pending_action=new_pending_action, state=new_state)
+    result = await chat_graph.ainvoke({
+        "messages":       history,
+        "current_node":   current_state.value,
+        "pending_action": pending_action,
+        "response":       "",
+        "db":             db,
+    })
+    new_state = AgentState(result["current_node"])
+    session_store.set(session_id, result["messages"],
+                      pending_action=result["pending_action"], state=new_state)
+    response_text = result["response"]
 
     return ChatResponse(
         session_id=session_id,

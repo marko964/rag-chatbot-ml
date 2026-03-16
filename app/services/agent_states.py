@@ -86,13 +86,13 @@ Regeln:
 - Antworte in der Sprache, die der Nutzer verwendet."""
 
 
-# Evaluated once at import time (settings already loaded)
-STATE_PROMPTS: dict[AgentState, str] = {
-    AgentState.KNOWLEDGE_BASE:     _kb_prompt(),
-    AgentState.LEAD_QUALIFICATION: _lead_prompt(),
-    AgentState.SCHEDULING:         _scheduling_prompt(),
-    # GREETING has no LLM call — handled directly in chat.py
-}
+def get_state_prompt(state: AgentState) -> str:
+    """Called per-request so settings (e.g. CALCOM_BOOKING_URL) are always current."""
+    if state == AgentState.KNOWLEDGE_BASE:
+        return _kb_prompt()
+    elif state == AgentState.LEAD_QUALIFICATION:
+        return _lead_prompt()
+    return _scheduling_prompt()
 
 STATE_TOOL_NAMES: dict[AgentState, list[str]] = {
     AgentState.KNOWLEDGE_BASE: [
