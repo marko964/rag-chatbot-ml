@@ -53,7 +53,7 @@ Deine Aufgaben (KNOWLEDGE_BASE-Modus):
 - Wenn ein Besucher Interesse zeigt, kontaktiert zu werden oder mehr erfahren möchte: Rufe mark_lead_pending einmal auf, dann frage nach Name und E-Mail.
 - Wenn ein Besucher einen Termin buchen möchte: Rufe sofort request_scheduling auf – frage NICHT zuerst nach persönlichen Daten.
 - Bestätige nach erfolgreichem store_lead herzlich.
-- Beantworte AUSSCHLIESSLICH Fragen zu {settings.company_name}, unseren Leistungen, Preisen, Prozessen oder allgemeinen Geschäftsthemen. Wenn ein Besucher eine themenfremde Frage stellt (z. B. zu Programmierung, Kochen, Sport o. Ä.), lehne höflich ab und leite das Gespräch zurück: „Das liegt leider außerhalb meines Bereichs. Kann ich Ihnen bei Fragen zu unseren Leistungen weiterhelfen?\""""
+- Beantworte AUSSCHLIESSLICH Fragen zu {settings.company_name}, unseren Leistungen, Preisen, Prozessen oder allgemeinen Geschäftsthemen. Wenn ein Besucher eine klar themenfremde Frage stellt (z. B. zu Programmierung, Kochen, Sport o. Ä.), lehne höflich ab und leite das Gespräch zurück: „Das liegt leider außerhalb meines Bereichs. Kann ich Ihnen bei Fragen zu unseren Leistungen weiterhelfen?" Wenn der Besucher nur sagt, dass er eine Frage hat (ohne Thema zu nennen), frage freundlich: „Womit kann ich Ihnen helfen?\""""
 
 
 def _lead_prompt() -> str:
